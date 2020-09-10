@@ -251,6 +251,7 @@ class FtmlTeacher(FixedDialogTeacher):
         self._setup_data(opt['datafile'], jsons_path)
         self.id = 'ftml'
         self.reset()
+        self.restricted_to_domain = None
         
         self.added_domains_buffer = {}
         
@@ -290,7 +291,9 @@ class FtmlTeacher(FixedDialogTeacher):
         for d in self.domains:
             self.domain_convo_inds[d] = [i for i in range(len(self.messages)) if domains[i] == d]
     
-    
+
+    def fix_teacher_domain(self, domain):
+        self.restricted_to_domain = domain
     
     
     def add_domain(self, domain):
@@ -405,14 +408,25 @@ class FtmlTeacher(FixedDialogTeacher):
             num_eps = self.num_episodes()
         if loop is None:
             loop = self.training
-        if self.random:
+            
+        if self.restricted_to_domain is not None:
+            k = self.restricted_to_domain
+            added_episodes_domain = self.domain_convo_inds[k][:self.added_domains_buffer[k]]
+            # todo: should these be sampled without replacement?! Kun
+            new_idx = random.sample(added_episodes_domain, 1)[0]
+            
+        elif self.random:
             new_idx = random.randrange(num_eps)
+            print('Why is the teacher not restricted to a domain?')
+            sys.exit()
         else:
             with self._lock():
                 self.index.value += 1
                 if loop:
                     self.index.value %= num_eps
                 new_idx = self.index.value
+            print('Why is the teacher looping?')
+            sys.exit()
         return new_idx
         
         

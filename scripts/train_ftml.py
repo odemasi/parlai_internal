@@ -25,6 +25,7 @@ from parlai.core.worlds import create_task
 # from parlai.utils.misc import Timer, nice_report
 from parlai.core.script import ParlaiScript, register_script
 import parlai.utils.logging as logging
+import copy
 
 
 def setup_args(parser=None) -> ParlaiParser:
@@ -66,7 +67,7 @@ class FtmlTrainLoop(TrainLoop):
 #         self.world = create_task(opt, self.agent)
         self.meta_parleys = 0
         print('should be DefaultWorld: ', self.world.__class__.__name__)
-        print('should be FtmlTeacher: ', self.world.agents[0].__class__.__name__)
+        print('should be DefaultTeacher: ', self.world.agents[0].__class__.__name__)
         print('should be FtmlLearnerAgent: ', self.world.agents[1].__class__.__name__)
         
         # smart defaults for --validation-metric-mode
@@ -117,9 +118,10 @@ class FtmlTrainLoop(TrainLoop):
                     
                     # fine tune model.
                     # i.e., update_procedure
-                    M = world.agents[1].copy()
-                    for n in enumerate(opt.get('n_grad')):
-                        world.parley(domain) # Todo: I think here the teacher needs to have the domain set.
+                    M = copy.deepcopy(world.agents[1].state_dict())
+                    teacher.fix_teacher_domain(domain)
+                    for n in range(opt.get('n_grad')):
+                        world.parley() # Todo: I think here the teacher needs to have the domain set.
                     
                     
                     # if loss < gamma, record efficiency for domain as |Dt| datapoints
@@ -128,7 +130,7 @@ class FtmlTrainLoop(TrainLoop):
                     if not more_data_in_domain:
                         print('todo: Record final performance of w˜ t on test set D test t for task t.')
                         
-                    world.agents[1] = M
+                    world.agents[1].load_state_dict(M)
 
                 # get the total training examples done, compute epochs
 #                 self._total_epochs = self._preempted_epochs + sum(
@@ -246,5 +248,5 @@ class FtmlTrainModel(TrainModel):
 
 if __name__ == '__main__':
     FtmlTrainModel.main()
-    
+#     python parlai_internal/scripts/train_ftml.py -t internal:ftml --model internal:ftml_learner --model_file discard
     # python parlai_internal/scripts/train_ftml.py -t internal:ftml --model image_seq2seq --model_file discard

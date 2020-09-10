@@ -1,16 +1,17 @@
 
-from parlai.agents.image_seq2seq.image_seq2seq import ImageSeq2seqAgent
+# from parlai.agents.image_seq2seq.image_seq2seq import ImageSeq2seqAgent
 # from .build import build
 import os
 import json
-from parlai.agents.image_seq2seq.image_seq2seq import ImageSeq2seqAgent
+from parlai.agents.seq2seq.seq2seq import Seq2seqAgent
+# from parlai.agents.image_seq2seq.image_seq2seq import ImageSeq2seqAgent
 from parlai.core.message import Message
 import random
 import sys
 
 
 
-class FtmlLearnerAgent(ImageSeq2seqAgent):
+class FtmlLearnerAgent(Seq2seqAgent):
     
 #     def __init__(self, opt):
 #         super().__init__(opt)
