@@ -1,4 +1,4 @@
-from parlai.scripts.train_model import TrainLoop, TrainModel, setup_args as setup_train_args
+from parlai.scripts.train_model import TrainLoop, TrainModel, load_eval_worlds, setup_args as setup_train_args
 import sys
 
 # import json
@@ -41,11 +41,11 @@ def setup_args(parser=None) -> ParlaiParser:
     train = parser.add_argument_group('FTML Training Loop Arguments')
 
 #     train.add_argument('--n_grad', type='bool', default=False, hidden=True)
-    train.add_argument('-ngrad', '--num-grad', type=int, default=10)
+    train.add_argument('-ngrad', '--num-grad', type=int, default=2)
     train.add_argument('-nadd', '--num-added-data', type=int, default=10)
-    train.add_argument('-mbchsztr', '--meta-batchsize_tr', type=int, default=5)
-    train.add_argument('-mbchszval', '--meta-batchsize_val', type=int, default=5)
-    train.add_argument('-nmmetastep', '--n-meta-steps', type=int, default=5)
+    train.add_argument('-mbchsztr', '--meta-batchsize_tr', type=int, default=2)
+    train.add_argument('-mbchszval', '--meta-batchsize_val', type=int, default=2)
+    train.add_argument('-nmmetastep', '--n-meta-steps', type=int, default=2)
     
     TensorboardLogger.add_cmdline_args(parser)
 
@@ -118,18 +118,27 @@ class FtmlTrainLoop(TrainLoop):
                     
                     # fine tune model.
                     # i.e., update_procedure
+                    # Kun: Finn et al. use this as a threshold to decide when to stop training. 
+                    # maybe we should only do when the domain data has been fully accumulated?
                     M = copy.deepcopy(world.agents[1].state_dict())
                     teacher.fix_teacher_domain(domain)
-                    for n in range(opt.get('n_grad')):
-                        world.parley() # Todo: I think here the teacher needs to have the domain set.
+                    for n in range(opt.get('n_grad')): 
+                        # Kun: what do you think about fixing domain-tuning to an epoch over 
+                        # the train or train + val data?
+                        world.parley() # Note the updating is fixed to the domain training data only.
                     
                     
                     # if loss < gamma, record efficiency for domain as |Dt| datapoints
                     
                     more_data_in_domain = teacher.added_domains_buffer[domain] < N
                     if not more_data_in_domain:
-                        print('todo: Record final performance of w˜ t on test set D test t for task t.')
-                        
+                        logging.info('evaluating on domain %s...' % domain)
+                        print('todo: Record final performance of w˜_t on test set for task t.')
+                        test_worlds = load_eval_worlds(self.agent, opt, 'test')
+                        max_exs = -1
+                        t_report = self._run_eval(test_worlds, opt, 'test', max_exs, write_log=True)
+                        print(t_report)     
+        
                     world.agents[1].load_state_dict(M)
 
                 # get the total training examples done, compute epochs

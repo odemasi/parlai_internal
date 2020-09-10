@@ -41,7 +41,8 @@ class DefaultWorld(DialogPartnerWorld):
             # Sample minibatches and set these as the parley data
             added_episodes_domain = teacher.domain_convo_inds[k][:teacher.added_domains_buffer[k]]
 
-            # todo: should these be sampled without replacement?! Kun
+            # Kun: these should be sampled without replacement, right? 
+            # Kun: currently they sample D_tr from the training set and D_val from the validation set. Should we pool train & val?
             Dk_tr = random.sample(added_episodes_domain, self.opt.get('meta_batchsize_tr'))
             Dk_val = random.sample(added_episodes_domain, self.opt.get('meta_batchsize_val'))
             
@@ -52,9 +53,7 @@ class DefaultWorld(DialogPartnerWorld):
             
     def update_parley(self, k, Dk_tr, Dk_val):
         
-        agents = self.agents
-        teacher = agents[0]
-        student = agents[1]
+        teacher, student = self.agents
         
         for i in range(len(Dk_tr)): 
             
@@ -115,10 +114,10 @@ class DefaultWorld(DialogPartnerWorld):
             
             student._control_local_metrics(disabled=True) # turn off local metric computation
             loss = student.compute_loss(batch)
-            print('loss: ', loss)
+            
             student.backward(loss)
-            print('grad: ', list(student.model.parameters())[0].grad)
             student.update_params()
+#             print('grad: ', list(student.model.parameters())[0].grad)
             
             print('Updated: ', student.model.state_dict()[param_names[3]][0,:10])
             
