@@ -29,11 +29,11 @@ class DefaultWorld(DialogPartnerWorld):
         print('FTML WORLD!!!!')        
         
         
-    def meta_parleys(self, n_meta):
+    def meta_parleys(self):
         # meta_update
         
         teacher = self.agents[0]
-        for nm in range(self.opt.get('n_meta_steps')):
+        for nm in range(self.opt.get('num_meta_steps')):
             
             # Sample domain to take data from
             k = random.choice(list(teacher.added_domains_buffer.keys()))
@@ -81,8 +81,8 @@ class DefaultWorld(DialogPartnerWorld):
             batch = student.batchify(observations_tr)
             batch_val = student.batchify(observations_val)
             
-            print('EXAMPLES OF TRAINING OBSERVATIONS: ', len(observations_tr), observations_tr[:3])
-            print('EXAMPLES OF VALIDATION OBSERVATIONS: ', len(observations_val), observations_val[:3])
+#             print('EXAMPLES OF TRAINING OBSERVATIONS: ', len(observations_tr), observations_tr[:3])
+#             print('EXAMPLES OF VALIDATION OBSERVATIONS: ', len(observations_val), observations_val[:3])
 
 #             if (
 #                 'label_vec' in batch
@@ -109,8 +109,8 @@ class DefaultWorld(DialogPartnerWorld):
             init_model_params = copy.deepcopy(student.model.state_dict())
             param_names = list(init_model_params.keys())
             
-            import torch; torch.set_printoptions(precision=6)
-            print('Init: ', student.model.state_dict()[param_names[3]][0,:10])
+#             import torch; torch.set_printoptions(precision=6)
+#             print('Init: ', student.model.state_dict()[param_names[3]][0,:10])
             
             student._control_local_metrics(disabled=True) # turn off local metric computation
             loss = student.compute_loss(batch)
@@ -119,19 +119,19 @@ class DefaultWorld(DialogPartnerWorld):
             student.update_params()
 #             print('grad: ', list(student.model.parameters())[0].grad)
             
-            print('Updated: ', student.model.state_dict()[param_names[3]][0,:10])
+#             print('Updated: ', student.model.state_dict()[param_names[3]][0,:10])
             
             loss = student.compute_loss(batch_val)
             student.backward(loss)
-            print('second eval:', student.model.state_dict()[param_names[3]][0,:10])
+#             print('second eval:', student.model.state_dict()[param_names[3]][0,:10])
             
             
             student.model.load_state_dict(init_model_params)
-            print('back to init: ', student.model.state_dict()[param_names[3]][0,:10])
+#             print('back to init: ', student.model.state_dict()[param_names[3]][0,:10])
             
             
             student.update_params()
-            print('final updated: ', student.model.state_dict()[param_names[3]][0,:10])
+#             print('final updated: ', student.model.state_dict()[param_names[3]][0,:10])
             
               
 #             else:

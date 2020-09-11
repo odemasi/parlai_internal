@@ -42,10 +42,10 @@ def setup_args(parser=None) -> ParlaiParser:
 
 #     train.add_argument('--n_grad', type='bool', default=False, hidden=True)
     train.add_argument('-ngrad', '--num-grad', type=int, default=2)
-    train.add_argument('-nadd', '--num-added-data', type=int, default=10)
+    train.add_argument('-nadd', '--num-added-data', type=int, default=200)
     train.add_argument('-mbchsztr', '--meta-batchsize_tr', type=int, default=2)
     train.add_argument('-mbchszval', '--meta-batchsize_val', type=int, default=2)
-    train.add_argument('-nmmetastep', '--n-meta-steps', type=int, default=2)
+    train.add_argument('-nmmetastep', '--num-meta-steps', type=int, default=2)
     
     TensorboardLogger.add_cmdline_args(parser)
 
@@ -70,6 +70,10 @@ class FtmlTrainLoop(TrainLoop):
         print('should be DefaultTeacher: ', self.world.agents[0].__class__.__name__)
         print('should be FtmlLearnerAgent: ', self.world.agents[1].__class__.__name__)
         
+        
+        self.test_worlds = load_eval_worlds(self.agent, opt, 'test')
+        
+        
         # smart defaults for --validation-metric-mode
 #         if opt['validation_metric'] in {'loss', 'ppl', 'mean_rank'}:
 #             opt['validation_metric_mode'] = 'min'
@@ -88,7 +92,6 @@ class FtmlTrainLoop(TrainLoop):
         opt = self.opt
         world = self.world
         domains = []; print('todo')
-        n = opt.get('num_added_data')
         teacher = world.agents[0]
         more_data_in_domain = True
         
@@ -96,22 +99,26 @@ class FtmlTrainLoop(TrainLoop):
         with world:
             for domain in teacher.domains:
             
-                N = teacher.domain_convo_inds[domain]
+                N = len(teacher.domain_convo_inds[domain])
                 teacher.add_domain(domain)
-            
+                
                 while more_data_in_domain:
-                    teacher.add_training_data(domain, n)
-
+                    teacher.add_training_data(domain, opt.get('num_added_data'))
+                    
+                    print('%s data of %s total episodes added' % (teacher.added_domains_buffer[domain], N))
+#                     print("Num teacher episodes: ", teacher.num_episodes())
                     # do one example / batch of examples
-                    try:
-                        # meta_update
-                        world.meta_parleys(opt.get('n_meta'))
-                    except StopTrainException:
-                        if is_distributed():
-                            raise RuntimeError(
-                                "StopTrainException not supported for " "distributed mode"
-                            )
-                        break
+                    # meta_update
+                    world.meta_parleys()
+#                     try:
+#                         # meta_update
+#                         world.meta_parleys(opt.get('num_meta_steps'))
+#                     except StopTrainException:
+#                         if is_distributed():
+#                             raise RuntimeError(
+#                                 "StopTrainException not supported for " "distributed mode"
+#                             )
+#                         break
 
                     self.meta_parleys += 1
                     
@@ -120,26 +127,33 @@ class FtmlTrainLoop(TrainLoop):
                     # i.e., update_procedure
                     # Kun: Finn et al. use this as a threshold to decide when to stop training. 
                     # maybe we should only do when the domain data has been fully accumulated?
-                    M = copy.deepcopy(world.agents[1].state_dict())
+                    M = copy.deepcopy(world.agents[1].model.state_dict())
+                    print("Num teacher episodes: ", teacher.num_episodes())
                     teacher.fix_teacher_domain(domain)
-                    for n in range(opt.get('n_grad')): 
+                    
+                    print("Num teacher episodes %s should be %s in domain %s" % (teacher.num_episodes(), len(teacher.domain_convo_inds[teacher.restricted_to_domain]), domain))
+                    for n in range(opt.get('num_grad')): 
                         # Kun: what do you think about fixing domain-tuning to an epoch over 
                         # the train or train + val data?
                         world.parley() # Note the updating is fixed to the domain training data only.
                     
                     
                     # if loss < gamma, record efficiency for domain as |Dt| datapoints
-                    
                     more_data_in_domain = teacher.added_domains_buffer[domain] < N
                     if not more_data_in_domain:
                         logging.info('evaluating on domain %s...' % domain)
                         print('todo: Record final performance of w˜_t on test set for task t.')
-                        test_worlds = load_eval_worlds(self.agent, opt, 'test')
+                        
+                        for w in self.test_worlds:
+                            w.reset() # Should also reset the teacher.index.value --> -1, but keep the domain set.
+                            w.agents[0].add_domain_data(domain)
+                            w.agents[0].fix_teacher_domain(domain)
+                            print("Num test-teacher episodes %s should be %s in domain %s" % (w.agents[0].num_episodes(), len(w.agents[0].domain_convo_inds[w.agents[0].restricted_to_domain]), domain))
                         max_exs = -1
-                        t_report = self._run_eval(test_worlds, opt, 'test', max_exs, write_log=True)
+                        t_report = self._run_eval(self.test_worlds, opt, 'test', max_exs, write_log=True)
                         print(t_report)     
         
-                    world.agents[1].load_state_dict(M)
+                    world.agents[1].model.load_state_dict(M)
 
                 # get the total training examples done, compute epochs
 #                 self._total_epochs = self._preempted_epochs + sum(
