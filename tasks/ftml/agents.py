@@ -98,11 +98,14 @@ class FtmlTeacher(FixedDialogTeacher):
         self.added_domains_buffer[domain] = 0
         # shuffle the order the data will be accumulated in.
         random.shuffle(self.domain_convo_inds[domain])
+    
         
+    def added_domains(self):
+        return [domain for domain in self.added_domains_buffer.keys() if self.added_domains_buffer[domain] > 0]
         
         
     def add_all_domain_data(self, domain):
-        self.add_all_training_data(domain, len(self.domain_convo_inds[domain])))
+        self.add_training_data(domain, len(self.domain_convo_inds[domain]))
         
                             
                             
@@ -119,6 +122,7 @@ class FtmlTeacher(FixedDialogTeacher):
 
 
     def num_examples(self):
+        # This is in the whole dataset split, across domains.
         examples = 0
         for data in self.messages:
             examples += len(data['log']) // 2
@@ -127,10 +131,15 @@ class FtmlTeacher(FixedDialogTeacher):
 
 
     def num_episodes(self):
+        return len(self.messages)
+            
+            
+            
+    def num_episodes_in_restricted_domain(self):
         if self.restricted_to_domain: 
             return len(self.domain_convo_inds[self.restricted_to_domain])
         else:
-            return len(self.messages)
+            return None
     
     
     
@@ -220,6 +229,7 @@ class FtmlTeacher(FixedDialogTeacher):
         if self.restricted_to_domain is not None:
             k = self.restricted_to_domain
             added_episodes_domain = self.domain_convo_inds[k][:self.added_domains_buffer[k]]
+            num_eps_domain = self.num_episodes_in_restricted_domain()
             
         else:
             print('Why is the teacher not restricted to a domain?')
@@ -238,7 +248,11 @@ class FtmlTeacher(FixedDialogTeacher):
                     print('Why is the teacher looping? should be streaming in eval?')
                     sys.exit()
 #                 new_idx = self.index.value
-                new_idx = added_episodes_domain[self.index.value]
+#                 print(len(added_episodes_domain), self.index.value)
+                if self.index.value >= self.num_episodes_in_restricted_domain():
+                    new_idx = None
+                else:
+                    new_idx = added_episodes_domain[self.index.value]
                 
         return new_idx
         
@@ -256,17 +270,30 @@ class FtmlTeacher(FixedDialogTeacher):
         episode. If that episode is over, gets a new episode index and returns the first
         example of that episode.
         """
+        
         if self._episode_done:
             self.episode_idx = self.next_episode_idx()
             self.entry_idx = 0
         else:
             self.entry_idx += 1
-
-        if self.episode_idx >= self.num_episodes():
+        
+        # HERE: This is what's returning empty examples.... Can I just remove this? How to replace?
+        # Note: self.episode_idx indexes all the episodes. If teacher is constrained to a domain,
+        # then self.num_episodes is episodes in the domain, and episode_idx can be larger.
+        # However, self.index.value shouldn't be larger than the number of episodes in the domain...
+        # This may need to change if we want to loop over the domain examples multiple times, e.g., fine-tuning.
+#         if self.episode_idx >= self.num_episodes():
+#         print(self.index.value, self.num_episodes(), self.num_episodes_in_restricted_domain())
+        if self.index.value >= self.num_episodes_in_restricted_domain():
+            print('no more episodes')
             self.has_more_exs = False
             return {'episode_done': True}, True
 
         ex = self.get(self.episode_idx, self.entry_idx)
+        k = self.restricted_to_domain
+#         print('restricted episodes: ', self.domain_convo_inds[k][:self.added_domains_buffer[k]])
+#         print('getting episode: %s, entry: %s' % (self.episode_idx, self.entry_idx))
+#         print('TEACHER EXAMPLE: ', ex)
         self._episode_done = ex.get('episode_done', False)
 
         if (

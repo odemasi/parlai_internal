@@ -33,22 +33,25 @@ class DefaultWorld(DialogPartnerWorld):
         # meta_update
         
         teacher = self.agents[0]
+#         while validation_decreasing:
         for nm in range(self.opt.get('num_meta_steps')):
-            
+        
             # Sample domain to take data from
             k = random.choice(list(teacher.added_domains_buffer.keys()))
-            
+        
             # Sample minibatches and set these as the parley data
             added_episodes_domain = teacher.domain_convo_inds[k][:teacher.added_domains_buffer[k]]
-
+            
+            # todo: double check these are coming from train only.
             # Kun: these should be sampled without replacement, right? 
-            # Kun: currently they sample D_tr from the training set and D_val from the validation set. Should we pool train & val?
+            # Kun: currently they sample D_tr from the training set and D_val from the training set. Should we pool train & val?
             Dk_tr = random.sample(added_episodes_domain, self.opt.get('meta_batchsize_tr'))
             Dk_val = random.sample(added_episodes_domain, self.opt.get('meta_batchsize_val'))
-            
+        
             #set the parley data and then parley through them.
             self.update_parley(k, Dk_tr, Dk_val)
-                
+            
+            
                 
             
     def update_parley(self, k, Dk_tr, Dk_val):
@@ -56,7 +59,7 @@ class DefaultWorld(DialogPartnerWorld):
         teacher, student = self.agents
         
         for i in range(len(Dk_tr)): 
-            
+            # todo later? batchify all the turns from all the dialogs in the meta-batch together. 
             observations_tr = []; observations_val = []
             for a in teacher.get_episode(Dk_tr[i]):
                 observations_tr.extend([student.observe(a)])
@@ -80,28 +83,7 @@ class DefaultWorld(DialogPartnerWorld):
             # create a batch from the vectors
             batch = student.batchify(observations_tr)
             batch_val = student.batchify(observations_val)
-            
-#             print('EXAMPLES OF TRAINING OBSERVATIONS: ', len(observations_tr), observations_tr[:3])
-#             print('EXAMPLES OF VALIDATION OBSERVATIONS: ', len(observations_val), observations_val[:3])
 
-#             if (
-#                 'label_vec' in batch
-#                 and 'text_vec' in batch
-#                 and batch.label_vec is not None
-#                 and batch.text_vec is not None
-#             ):
-#                 # tokens per batch
-#                 # we divide by the binary is_primary_worker() so that the numerator is
-#                 # num_tokens in all workers, and the denominator is 1.
-#                 tpb = GlobalAverageMetric(
-#                     (batch.label_vec != self.NULL_IDX).sum().item(),
-#                     float(is_primary_worker()),
-#                 )
-#                 self.global_metrics.add('tpb', tpb)
-# 
-#             if self.is_training:
-#             output = self.train_step(batch)
-            
             student._init_cuda_buffer(self.opt['batchsize'], student.label_truncate or 256)
             student.model.train()
             student.zero_grad()

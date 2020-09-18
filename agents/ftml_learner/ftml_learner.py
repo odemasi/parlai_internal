@@ -17,49 +17,49 @@ class FtmlLearnerAgent(Seq2seqAgent):
 #         super().__init__(opt)
         
         
-    def observe_tr_val(self, observations_tr, observations_val):
-        """
-        Process incoming message in preparation for producing a response.
-        This includes remembering the past history of the conversation.
-        """
-        # TODO: Migration plan: TorchAgent currently supports being passed
-        # observations as vanilla dicts for legacy interop; eventually we
-        # want to remove this behavior and demand that teachers return Messages
-        observations_tr = [Message(observation) for observation in observations_tr]
-        observations_val = [Message(observation) for observation in observations_val]
-
-        # Sanity check everything is in order
-        self._validate_observe_invariants()
-
-        print('Need to check if episodes done in FtmlLearnerAgent!')
-#         if observation.get('episode_done'):
-#             self.__expecting_clear_history = True
-#         elif 'labels' in observation or 'eval_labels' in observation:
-#             # make sure we note that we're expecting a reply in the future
-#             self.__expecting_to_reply = True
-
-        self.observations_tr = observations_tr
-        self.observations_val = observations_val
-        print('Observations in tr set:')
-        print(self.observations_tr)
-        
-        print('\n\nObservations in val set:')
-        print(self.observations_val)
-        sys.exit()
-        # Update the history using the observation.
-        # We may also consider adding a temporary string to the history
-        # using the `get_temp_history()` function: this string will
-        # persist until it is updated.
-#         self.history.update_history(
-#             observation, temp_history=self.get_temp_history(observation)
-#         )
-#         return self.vectorize(
-#             observation,
-#             self.history,
-#             text_truncate=self.text_truncate,
-#             label_truncate=self.label_truncate,
-#         )
-        
+#     def observe_tr_val(self, observations_tr, observations_val):
+#         """
+#         Process incoming message in preparation for producing a response.
+#         This includes remembering the past history of the conversation.
+#         """
+#         # TODO: Migration plan: TorchAgent currently supports being passed
+#         # observations as vanilla dicts for legacy interop; eventually we
+#         # want to remove this behavior and demand that teachers return Messages
+#         observations_tr = [Message(observation) for observation in observations_tr]
+#         observations_val = [Message(observation) for observation in observations_val]
+# 
+#         # Sanity check everything is in order
+#         self._validate_observe_invariants()
+# 
+#         print('Need to check if episodes done in FtmlLearnerAgent!')
+# #         if observation.get('episode_done'):
+# #             self.__expecting_clear_history = True
+# #         elif 'labels' in observation or 'eval_labels' in observation:
+# #             # make sure we note that we're expecting a reply in the future
+# #             self.__expecting_to_reply = True
+# 
+#         self.observations_tr = observations_tr
+#         self.observations_val = observations_val
+#         print('Observations in tr set:')
+#         print(self.observations_tr)
+#         
+#         print('\n\nObservations in val set:')
+#         print(self.observations_val)
+#         sys.exit()
+#         # Update the history using the observation.
+#         # We may also consider adding a temporary string to the history
+#         # using the `get_temp_history()` function: this string will
+#         # persist until it is updated.
+# #         self.history.update_history(
+# #             observation, temp_history=self.get_temp_history(observation)
+# #         )
+# #         return self.vectorize(
+# #             observation,
+# #             self.history,
+# #             text_truncate=self.text_truncate,
+# #             label_truncate=self.label_truncate,
+# #         )
+#         
         
     def meta_act(self):
     # def act(self):
