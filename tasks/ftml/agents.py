@@ -18,7 +18,7 @@ def _path(opt):
 
     # set up path to data (specific to each dataset)
     print('DATAPATH:', opt['datapath'])
-    jsons_path = os.path.join(opt['datapath'], 'multiwoz', 'MULTIWOZ2.1')
+    jsons_path = os.path.join(opt['datapath'], 'multiwoz_v21', 'MULTIWOZ2.1')
     conversations_path = os.path.join(jsons_path, 'data.json')
     return conversations_path, jsons_path
 
@@ -90,8 +90,8 @@ class FtmlTeacher(FixedDialogTeacher):
             self.domain_convo_inds[d] = [i for i in range(len(self.messages)) if domains[i] == d]
     
 
-    def fix_teacher_domain(self, domain):
-        self.restricted_to_domain = domain
+    def fix_teacher_domain(self, domains):
+        self.restricted_to_domain = domains
     
     
     def add_domain(self, domain):
@@ -137,7 +137,7 @@ class FtmlTeacher(FixedDialogTeacher):
             
     def num_episodes_in_restricted_domain(self):
         if self.restricted_to_domain: 
-            return len(self.domain_convo_inds[self.restricted_to_domain])
+            return sum([len(self.domain_convo_inds[k]) for k in self.restricted_to_domain])
         else:
             return None
     
@@ -178,7 +178,9 @@ class FtmlTeacher(FixedDialogTeacher):
             }
             actions.extend([action,])
         return actions
-        
+    
+    def is_restricted(self):
+        return self.restricted_to_domain is not None
     
         
         
@@ -212,7 +214,14 @@ class FtmlTeacher(FixedDialogTeacher):
 # 
 #         return action
         
+    def get_added_episodes(self):
+    
+        added_episodes = []
+        for k in self.restricted_to_domain:
+            added_episodes += self.domain_convo_inds[k][:self.added_domains_buffer[k]]
             
+        return added_episodes
+                
     def next_episode_idx(self, num_eps=None, loop=None):
         """
         Return the next episode index.
@@ -226,34 +235,45 @@ class FtmlTeacher(FixedDialogTeacher):
         if loop is None:
             loop = self.training
             
-        if self.restricted_to_domain is not None:
-            k = self.restricted_to_domain
-            added_episodes_domain = self.domain_convo_inds[k][:self.added_domains_buffer[k]]
-            num_eps_domain = self.num_episodes_in_restricted_domain()
+        if self.is_restricted():
+            # can be list of domains.
+            added_episodes_domain = self.get_added_episodes()
+            num_eps_domain = len(added_episodes_domain)
             
-        else:
-            print('Why is the teacher not restricted to a domain?')
-            sys.exit()
+#         else:
+#             # teacher is not restricted to a domain
+#             print('teacher not restricted to a domain. Index: ', self.index.value)
             
+                        
         if self.random:
-#             new_idx = random.randrange(num_eps)
+#             print('random')
             # todo: should these be sampled without replacement?! Kun
-            new_idx = random.sample(added_episodes_domain, 1)[0]
+            if self.is_restricted():
+                new_idx = random.sample(added_episodes_domain, 1)[0]
+            else:
+                new_idx = random.randrange(num_eps)
         else:
+#             print('streaming, loop:', loop)
             with self._lock():
                 self.index.value += 1
                 if loop:
                     # during training
-                    self.index.value %= num_eps
-                    print('Why is the teacher looping? should be streaming in eval?')
-                    sys.exit()
-#                 new_idx = self.index.value
-#                 print(len(added_episodes_domain), self.index.value)
-                if self.index.value >= self.num_episodes_in_restricted_domain():
-                    new_idx = None
+                    if self.is_restricted():
+                        self.index.value %= num_eps_domain
+                    else: 
+                        self.index.value %= num_eps
+                    new_idx = self.index.value
+                if self.is_restricted():
+                    if self.index.value >= num_eps_domain:
+                        new_idx = None
+                    else:
+                        new_idx = added_episodes_domain[self.index.value]
                 else:
-                    new_idx = added_episodes_domain[self.index.value]
-                
+                    if self.index.value >= self.num_episodes():
+                        new_idx = None
+                    else:
+                        new_idx = self.index.value
+#         print('New_idx: ', new_idx, self.index.value)        
         return new_idx
         
         
@@ -276,21 +296,24 @@ class FtmlTeacher(FixedDialogTeacher):
             self.entry_idx = 0
         else:
             self.entry_idx += 1
-        
+#         print('next_example info: ', self._episode_done, self.episode_idx, self.entry_idx)
         # HERE: This is what's returning empty examples.... Can I just remove this? How to replace?
         # Note: self.episode_idx indexes all the episodes. If teacher is constrained to a domain,
         # then self.num_episodes is episodes in the domain, and episode_idx can be larger.
         # However, self.index.value shouldn't be larger than the number of episodes in the domain...
         # This may need to change if we want to loop over the domain examples multiple times, e.g., fine-tuning.
-#         if self.episode_idx >= self.num_episodes():
+        if self.episode_idx is None or self.episode_idx >= self.num_episodes():
+            self.has_more_exs = False
+            return {'episode_done': True}, True
 #         print(self.index.value, self.num_episodes(), self.num_episodes_in_restricted_domain())
-        if self.index.value >= self.num_episodes_in_restricted_domain():
+
+        if self.is_restricted() and self.index.value >= self.num_episodes_in_restricted_domain():
             print('no more episodes')
             self.has_more_exs = False
             return {'episode_done': True}, True
 
         ex = self.get(self.episode_idx, self.entry_idx)
-        k = self.restricted_to_domain
+#         k = self.restricted_to_domain
 #         print('restricted episodes: ', self.domain_convo_inds[k][:self.added_domains_buffer[k]])
 #         print('getting episode: %s, entry: %s' % (self.episode_idx, self.entry_idx))
 #         print('TEACHER EXAMPLE: ', ex)
@@ -310,7 +333,7 @@ class FtmlTeacher(FixedDialogTeacher):
 
 
 class DefaultTeacher(FtmlTeacher):
-    def __init__(self, opt):
+    def __init__(self, opt, shared=None):
         print('FTML TEACHER!')
-        super().__init__(opt)
+        super().__init__(opt, shared=None)
     pass
