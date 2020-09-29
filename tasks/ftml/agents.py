@@ -136,8 +136,8 @@ class FtmlTeacher(FixedDialogTeacher):
             
             
     def num_episodes_in_restricted_domain(self):
-        if self.restricted_to_domain: 
-            return sum([len(self.domain_convo_inds[k]) for k in self.restricted_to_domain])
+        if self.is_restricted(): 
+            return sum([self.added_domains_buffer[k] for k in self.restricted_to_domain])
         else:
             return None
     
@@ -262,7 +262,7 @@ class FtmlTeacher(FixedDialogTeacher):
                         self.index.value %= num_eps_domain
                     else: 
                         self.index.value %= num_eps
-                    new_idx = self.index.value
+                        
                 if self.is_restricted():
                     if self.index.value >= num_eps_domain:
                         new_idx = None
@@ -305,7 +305,6 @@ class FtmlTeacher(FixedDialogTeacher):
         if self.episode_idx is None or self.episode_idx >= self.num_episodes():
             self.has_more_exs = False
             return {'episode_done': True}, True
-#         print(self.index.value, self.num_episodes(), self.num_episodes_in_restricted_domain())
 
         if self.is_restricted() and self.index.value >= self.num_episodes_in_restricted_domain():
             print('no more episodes')

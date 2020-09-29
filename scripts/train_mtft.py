@@ -27,6 +27,7 @@ from parlai.core.script import ParlaiScript, register_script
 import parlai.utils.logging as logging
 import copy
 import pickle
+import random
 
 
 
@@ -100,8 +101,10 @@ class MtftTrainLoop(TrainLoop):
         eval_data = {x:[] for x in teacher.domains}
         
         with world:
-            print(teacher.domains)
-            for d, domain in enumerate(teacher.domains):
+            shuffled_domains = [x for x in teacher.domains if x not in ['police', 'hospital']]
+            random.shuffle(shuffled_domains)
+            
+            for d, domain in enumerate(shuffled_domains):
                 
 
                 N = len(teacher.domain_convo_inds[domain])
@@ -135,9 +138,16 @@ class MtftTrainLoop(TrainLoop):
                 # validation_decreasing = # todo
                 # todo: add validation here to tell when to stop updating the meta model.
                 # This is harder to do, as the validation is of the meta model....
-                teacher.fix_teacher_domain(teacher.added_domains())
-                teacher.index.value = -1 # reset index because we'll stream through the training data.
-                teacher.entry_idx = 0
+                for w in self.valid_worlds:
+                    for dd in teacher.added_domains(): 
+                        w.reset() # Should also reset the teacher.index.value --> -1, but keep the domain fixed.
+                        w.agents[0].add_domain(dd)
+                        w.agents[0].add_all_domain_data(dd)
+                    # Fix validation teacher to domains training teacher has seen.
+                    w.agents[0].fix_teacher_domain(teacher.added_domains()) 
+                    w.agents[0].index.value = -1 # reset index because we'll stream through the training data.
+                    w.agents[0].entry_idx = 0
+                    
                 stop_training = self.validate()
                 logging.info('Multi-task model validation value: %s ' % self.best_valid)
 
@@ -146,35 +156,6 @@ class MtftTrainLoop(TrainLoop):
             # After the multi-task model is trained, fine tune model for each domain.
             M = copy.deepcopy(world.agents[1].model.state_dict())
             for dd in teacher.domains: 
-                
-                # make sure the meta parameters are loaded before evaluating another training domain
-                world.agents[1].model.load_state_dict(M)
-                
-                teacher.fix_teacher_domain([dd])
-                teacher.index.value = -1 # reset index because we'll stream through the training data.
-                teacher.entry_idx = 0
-                
-#                 logging.info("Num teacher episodes %s should be %s in test domain %s" % (teacher.num_episodes_in_restricted_domain(), len(teacher.domain_convo_inds[teacher.restricted_to_domain]), dd))
-#                     for n in range(opt.get('num_grad')): # fine-tuning steps
-                logging.info('Fine-tuning to: %s'% dd)
-                self.best_valid = None
-                stop_training = False
-                self.tune_parley_epochs = 0
-                
-                while not stop_training:
-                    # fine-tune for one epoch over training
-#                     while not world.epoch_done(): # HERE: loop for an epoch over domain training data. 
-                    for n in range(teacher.num_episodes_in_restricted_domain()): # epoch episodes, as each full episode processed. 
-                        # Kun: what do you think about fixing domain-tuning to an epoch over 
-                        # the train or train + val data?
-                        world.parley() # Note the updating is fixed to the domain training data only.
-                    # fine-tune until validation on domain stops decreasing.
-                    stop_training = self.validate()
-                    logging.info('Best valid: %s' % self.best_valid)
-                    self.tune_parley_epochs += 1
-                        
-                        
-                # if there is test data:
                 for w in self.test_worlds:
                     w.reset() # Should also reset the teacher.index.value --> -1, but keep the domain fixed.
                     w.agents[0].add_domain(dd)
@@ -185,7 +166,35 @@ class MtftTrainLoop(TrainLoop):
                     # be shared by reference in the training and the testing worlds.
                     
                 print("STARTING EVALUATION OF STUDENT HERE")
-                if self.test_worlds[0].agents[0].num_episodes_in_restricted_domain() > 0:
+                if self.test_worlds[0].agents[0].num_episodes_in_restricted_domain() > 0:                
+                    # make sure the meta parameters are loaded before evaluating another training domain
+                    world.agents[1].model.load_state_dict(M)
+                
+                    teacher.fix_teacher_domain([dd])
+                    teacher.index.value = -1 # reset index because we'll stream through the training data.
+                    teacher.entry_idx = 0
+                
+    #                 logging.info("Num teacher episodes %s should be %s in test domain %s" % (teacher.num_episodes_in_restricted_domain(), len(teacher.domain_convo_inds[teacher.restricted_to_domain]), dd))
+    #                     for n in range(opt.get('num_grad')): # fine-tuning steps
+                    logging.info('Fine-tuning to: %s'% dd)
+                    self.best_valid = None
+                    stop_training = False
+                    self.tune_parley_epochs = 0
+                
+                    while not stop_training:
+                        # fine-tune for one epoch over training
+    #                     while not world.epoch_done(): # HERE: loop for an epoch over domain training data. 
+                        for n in range(teacher.num_episodes_in_restricted_domain()): # epoch episodes, as each full episode processed. 
+                            # Kun: what do you think about fixing domain-tuning to an epoch over 
+                            # the train or train + val data?
+                            world.parley() # Note the updating is fixed to the domain training data only.
+                        # fine-tune until validation on domain stops decreasing.
+                        stop_training = self.validate()
+                        logging.info('Best valid: %s' % self.best_valid)
+                        self.tune_parley_epochs += 1
+                        
+                        
+                    # Evaluate on domain test set.
                     max_exs = -1
                     t_report = self._run_eval(self.test_worlds, opt, 'test', max_exs, write_log=True)
                     logging.info('on domain %s: test report: ' % dd)
@@ -211,6 +220,12 @@ class MtftTrainModel(TrainModel):
         return setup_args()
         
     def run(self):
+        import os
+        for f in ('discard_mtft', 'discard_mtft.opt', 'discard_mtft.trainstats'):
+            fdir = '/home/oademasi/transfer-learning-conv-ai/ParlAI/'
+            fname = fdir + f
+            if os.path.isfile(fname):
+                os.remove(fname)
         self.train_loop = MtftTrainLoop(self.opt)
         return self.train_loop.train()
 

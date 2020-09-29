@@ -15,7 +15,7 @@ from parlai.core.worlds import DialogPartnerWorld #, validate
 import random
 from parlai.core.message import Message
 from parlai.core.worlds import validate
-
+import parlai.utils.logging as logging
 
 
 class DefaultWorld(DialogPartnerWorld):
@@ -47,7 +47,8 @@ class DefaultWorld(DialogPartnerWorld):
             # Kun: currently they sample D_tr from the training set and D_val from the training set. Should we pool train & val?
             Dk_tr = random.sample(added_episodes_domain, self.opt.get('meta_batchsize_tr'))
             Dk_val = random.sample(added_episodes_domain, self.opt.get('meta_batchsize_val'))
-        
+            
+#             logging.info('meta step %s' % nm)
             #set the parley data and then parley through them.
             self.update_parley(k, Dk_tr, Dk_val)
             
@@ -57,10 +58,11 @@ class DefaultWorld(DialogPartnerWorld):
     def update_parley(self, k, Dk_tr, Dk_val):
         
         teacher, student = self.agents
+        observations_tr = []; observations_val = []
         
         for i in range(len(Dk_tr)): 
             # todo later? batchify all the turns from all the dialogs in the meta-batch together. 
-            observations_tr = []; observations_val = []
+            
             for a in teacher.get_episode(Dk_tr[i]):
                 observations_tr.extend([student.observe(a)])
                 student.self_observe(observations_tr[-1])
@@ -69,50 +71,55 @@ class DefaultWorld(DialogPartnerWorld):
                 observations_val.extend([student.observe(a)])
                 student.self_observe(observations_val[-1])
             
-            
-            batch_reply = [
-                Message({'id': self.getID(), 'episode_done': False}) for _ in observations_tr
-            ]
+#         logging.info('%s obs in Dk_tr' % len(observations_tr))    
+        batch_reply = [
+            Message({'id': self.getID(), 'episode_done': False}) for _ in observations_tr
+        ]
 #             batch_reply_val = [
 #                 Message({'id': self.getID(), 'episode_done': False}) for _ in observations_val
 #             ]
 
-            # check if there are any labels available, if so we will train on them
-            self.is_training = True #any('labels' in obs for obs in observations)
-
-            # create a batch from the vectors
-            batch = student.batchify(observations_tr)
-            batch_val = student.batchify(observations_val)
-
-            student._init_cuda_buffer(self.opt['batchsize'], student.label_truncate or 256)
-            student.model.train()
-            student.zero_grad()
-            
-            init_model_params = copy.deepcopy(student.model.state_dict())
-            param_names = list(init_model_params.keys())
-            
+        # check if there are any labels available, if so we will train on them
+        self.is_training = True #any('labels' in obs for obs in observations)
+        
+#         print('Train obs to batchify: ', observations_tr); sys.exit()
+        
+        # create a batch from the vectors
+        batch = student.batchify(observations_tr)
+        batch_val = student.batchify(observations_val)
+        
+#         logging.info('Tr batch size: %s' % batch.batchsize)
+#         logging.info('Val batch size: %s' % batch_val.batchsize)
+        student._init_cuda_buffer(self.opt['batchsize'], student.label_truncate or 256)
+        student.model.train()
+        student.zero_grad()
+        
+        init_model_params = copy.deepcopy(student.model.state_dict())
+        param_names = list(init_model_params.keys())
+        
 #             import torch; torch.set_printoptions(precision=6)
 #             print('Init: ', student.model.state_dict()[param_names[3]][0,:10])
-            
-            student._control_local_metrics(disabled=True) # turn off local metric computation
-            loss = student.compute_loss(batch)
-            
-            student.backward(loss)
-            student.update_params()
+        
+        student._control_local_metrics(disabled=True) # turn off local metric computation
+#         print(student.__local_metrics_enabled); sys.exit()
+        loss = student.compute_loss(batch)
+        
+        student.backward(loss)
+        student.update_params()
 #             print('grad: ', list(student.model.parameters())[0].grad)
-            
+        
 #             print('Updated: ', student.model.state_dict()[param_names[3]][0,:10])
-            
-            loss = student.compute_loss(batch_val)
-            student.backward(loss)
+        
+        loss = student.compute_loss(batch_val)
+        student.backward(loss)
 #             print('second eval:', student.model.state_dict()[param_names[3]][0,:10])
-            
-            
-            student.model.load_state_dict(init_model_params)
+        
+        
+        student.model.load_state_dict(init_model_params)
 #             print('back to init: ', student.model.state_dict()[param_names[3]][0,:10])
-            
-            
-            student.update_params()
+        
+        
+        student.update_params()
 #             print('final updated: ', student.model.state_dict()[param_names[3]][0,:10])
             
               
