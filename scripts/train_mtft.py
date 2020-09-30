@@ -44,11 +44,7 @@ def setup_args(parser=None) -> ParlaiParser:
     train = parser.add_argument_group('FTML Training Loop Arguments')
 
 #     train.add_argument('--n_grad', type='bool', default=False, hidden=True)
-#     train.add_argument('-ngrad', '--num-grad', type=int, default=2)
-#     train.add_argument('-nadd', '--num-added-data', type=int, default=50)
-#     train.add_argument('-mbchsztr', '--meta-batchsize_tr', type=int, default=10)
-#     train.add_argument('-mbchszval', '--meta-batchsize_val', type=int, default=10)
-#     train.add_argument('-nmmetastep', '--num-meta-steps', type=int, default=50)
+    train.add_argument('-nomt', '--no-multi-task', type='bool', default=False)
     
     TensorboardLogger.add_cmdline_args(parser)
 
@@ -76,7 +72,7 @@ class MtftTrainLoop(TrainLoop):
         
         self.test_worlds = load_eval_worlds(self.agent, opt, 'test')
         self.valid_worlds = load_eval_worlds(self.agent, opt, 'valid')
-        
+        self.logging_filename = opt['logging_filename']
         
         # smart defaults for --validation-metric-mode
 #         if opt['validation_metric'] in {'loss', 'ppl', 'mean_rank'}:
@@ -86,6 +82,9 @@ class MtftTrainLoop(TrainLoop):
 #         if opt.get('validation_metric_mode') is None:
 #             opt['validation_metric_mode'] = 'max'
 
+    def write_log(self, log_text):
+        with open(self.logging_filename, 'a') as f:
+            f.write(log_text+'\n')
 
     def train(self):
         """
@@ -111,11 +110,17 @@ class MtftTrainLoop(TrainLoop):
                 teacher.add_domain(domain)
                 teacher.add_all_domain_data(domain)
                 
-                self.best_valid = None
-                stop_training = False
+            self.best_valid = None
+            stop_training = False
+            
+            if opt['no_multi_task']:
+                # only fine-tune to each domain, so don't enter the multi-task while loop
+                stop_training = True
+                self._total_epochs = 0
+                self._total_exs = 0
                 
-            while not stop_training:
-                for _ in range(teacher.num_examples()): 
+            while not stop_training: # This is for multi-tasking a global model
+                for _ in range(int(teacher.num_episodes())): 
                     world.parley()
                     self.parleys += 1
                     
@@ -133,8 +138,8 @@ class MtftTrainLoop(TrainLoop):
                     
                     if log_time > self.log_every_n_secs:
                         self.log()
-                
-                
+                self.write_log('finished %s parleys' % self.parleys)
+                self.write_log('Learning rate before valid: %s ' % world.agents[1].optimizer.state_dict()['param_groups'][0]['lr'])
                 # validation_decreasing = # todo
                 # todo: add validation here to tell when to stop updating the meta model.
                 # This is harder to do, as the validation is of the meta model....
@@ -156,42 +161,60 @@ class MtftTrainLoop(TrainLoop):
             # After the multi-task model is trained, fine tune model for each domain.
             M = copy.deepcopy(world.agents[1].model.state_dict())
             for dd in teacher.domains: 
+                
+                # Restrict valid_world teachers to chosen domain for fine-tuning
+                for w in self.valid_worlds:
+                    w.reset() # Should also reset the teacher.index.value --> -1, but keep the domain fixed.
+                    w.agents[0].add_domain(dd)
+                    w.agents[0].add_all_domain_data(dd)
+                    w.agents[0].fix_teacher_domain([dd]) 
+                    w.agents[0].index.value = -1 # reset index because we'll stream through the data.
+                    w.agents[0].entry_idx = 0
+                
+                # Restrict test worlds to chosen domain for fine-tuning
                 for w in self.test_worlds:
                     w.reset() # Should also reset the teacher.index.value --> -1, but keep the domain fixed.
                     w.agents[0].add_domain(dd)
                     w.agents[0].add_all_domain_data(dd)
                     w.agents[0].fix_teacher_domain([dd])
+                    w.agents[0].index.value = -1 # reset index because we'll stream through the data.
+                    w.agents[0].entry_idx = 0
                 
                     # note the appropriate state_dict should be loaded, as the agent should 
                     # be shared by reference in the training and the testing worlds.
                     
-                print("STARTING EVALUATION OF STUDENT HERE")
+                self.write_log("STARTING Fine-tuning OF STUDENT HERE on %s " % dd)
                 if self.test_worlds[0].agents[0].num_episodes_in_restricted_domain() > 0:                
                     # make sure the meta parameters are loaded before evaluating another training domain
                     world.agents[1].model.load_state_dict(M)
-                
+                    
+                    # Restrict training world to fine-tuning domain
                     teacher.fix_teacher_domain([dd])
                     teacher.index.value = -1 # reset index because we'll stream through the training data.
-                    teacher.entry_idx = 0
-                
-    #                 logging.info("Num teacher episodes %s should be %s in test domain %s" % (teacher.num_episodes_in_restricted_domain(), len(teacher.domain_convo_inds[teacher.restricted_to_domain]), dd))
-    #                     for n in range(opt.get('num_grad')): # fine-tuning steps
+                    teacher.entry_idx = 0   
+                    
+                    
                     logging.info('Fine-tuning to: %s'% dd)
                     self.best_valid = None
                     stop_training = False
                     self.tune_parley_epochs = 0
-                
+                    
+                    # Fine-tune model to single domain
                     while not stop_training:
                         # fine-tune for one epoch over training
+                        self.write_log('Learning rate : %s ' % world.agents[1].optimizer.state_dict()['param_groups'][0]['lr'])
+                    
     #                     while not world.epoch_done(): # HERE: loop for an epoch over domain training data. 
                         for n in range(teacher.num_episodes_in_restricted_domain()): # epoch episodes, as each full episode processed. 
-                            # Kun: what do you think about fixing domain-tuning to an epoch over 
-                            # the train or train + val data?
                             world.parley() # Note the updating is fixed to the domain training data only.
+                        
                         # fine-tune until validation on domain stops decreasing.
                         stop_training = self.validate()
-                        logging.info('Best valid: %s' % self.best_valid)
                         self.tune_parley_epochs += 1
+                        
+                        logging.info('Best valid: %s' % self.best_valid)
+                        self.write_log('Best fine-tune valid: %s' % self.best_valid)
+                        self.write_log('Finished %s tune_parleys' % self.tune_parley_epochs)
                         
                         
                     # Evaluate on domain test set.
@@ -204,7 +227,10 @@ class MtftTrainLoop(TrainLoop):
         
         import datetime
         stamp = datetime.datetime.now().strftime('%Y_%m_%d_%H_%M')
-        locationname = '/home/oademasi/transfer-learning-conv-ai/ParlAI/parlai_internal/eval_data_mtft_%s.pkl' % stamp
+        if opt['no_multi_task']:
+            locationname = '/home/oademasi/transfer-learning-conv-ai/ParlAI/parlai_internal/eval_data_ft_%s.pkl' % stamp
+        else:
+            locationname = '/home/oademasi/transfer-learning-conv-ai/ParlAI/parlai_internal/eval_data_mtft_%s.pkl' % stamp
         pickle.dump(eval_data, open(locationname, 'wb'))
         print('wrote to: ', locationname)
         v_report = None
@@ -221,11 +247,19 @@ class MtftTrainModel(TrainModel):
         
     def run(self):
         import os
-        for f in ('discard_mtft', 'discard_mtft.opt', 'discard_mtft.trainstats'):
+        model_file = self.opt['model_file']
+        for f in (model_file, '%s.opt' % model_file, '%s.trainstats' % model_file):
             fdir = '/home/oademasi/transfer-learning-conv-ai/ParlAI/'
             fname = fdir + f
             if os.path.isfile(fname):
                 os.remove(fname)
+                
+        import datetime
+        stamp = datetime.datetime.now().strftime('%Y_%m_%d_%H_%M')
+        if self.opt['no_multi_task']:
+            self.opt['logging_filename'] = 'logging_ft_%s.txt' % stamp
+        else:
+            self.opt['logging_filename'] = 'logging_mtft_%s.txt' % stamp
         self.train_loop = MtftTrainLoop(self.opt)
         return self.train_loop.train()
 

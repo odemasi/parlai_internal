@@ -124,11 +124,10 @@ class FtmlTrainLoop(TrainLoop):
                 stop_training = False
                 
                 
-                
                 while not stop_training:
+                    # todo: Add student.zero_grad() here?
                     
                     # turn off local metrics for training, as these have to be redesigned
-#                     student._control_local_metrics(enabled=False, disabled=True)
                     student._control_local_metrics(disabled=True)
                     logging.info('Going to meta_parley')
                     # do one batch of examples
@@ -190,8 +189,18 @@ class FtmlTrainLoop(TrainLoop):
                 logging.info('Added domains: %s ' % ', '.join(teacher.added_domains()))
                 self.write_log('Added domains: %s ' % ', '.join(teacher.added_domains()))
                 
-                
                 for dd in teacher.added_domains(): 
+                
+                    # Restrict valid_world teachers to chosen domain for fine-tuning
+                    for w in self.valid_worlds:
+                        w.reset() # Should also reset the teacher.index.value --> -1, but keep the domain fixed.
+                        w.agents[0].add_domain(dd)
+                        w.agents[0].add_all_domain_data(dd)
+                        w.agents[0].fix_teacher_domain([dd]) 
+                        w.agents[0].index.value = -1 # reset index because we'll stream through the data.
+                        w.agents[0].entry_idx = 0
+                
+                    # Restrict test worlds to chosen domain for fine-tuning
                     for w in self.test_worlds:
                         w.reset() # Should also reset the teacher.index.value --> -1, but keep the domain fixed.
                         w.agents[0].add_domain(dd)
@@ -199,6 +208,8 @@ class FtmlTrainLoop(TrainLoop):
                         
                         # note: for testing only set to one domain.
                         w.agents[0].fix_teacher_domain([dd])
+                        w.agents[0].index.value = -1 # reset index because we'll stream through the data.
+                        w.agents[0].entry_idx = 0
                     
                         # note the appropriate model state_dict should be loaded, as the agent should 
                         # be shared by reference in the training and the testing worlds.
@@ -208,6 +219,7 @@ class FtmlTrainLoop(TrainLoop):
                         world.agents[1].model.load_state_dict(M)
                         logging.info('evaluating on domain %s...' % dd)
                         self.write_log('Tuning + evaluating on domain %s...' % dd)
+                        self.write_log('Learning rate: %s' % world.agents[1].optimizer.state_dict()['param_groups'][0]['lr'])
                         
                         # Fix to one domain for fine-tuning.
                         teacher.fix_teacher_domain([dd])
@@ -224,14 +236,15 @@ class FtmlTrainLoop(TrainLoop):
                         while not stop_training:
                             # fine-tune for one epoch over training
                             for n in range(teacher.num_episodes_in_restricted_domain()): # epoch episodes, as each full episode processed. 
-                                # Kun: what do you think about fixing domain-tuning to an epoch over 
-                                # the train or train + val data?
                                 world.parley() # Note the updating is fixed to the domain training data only.
+                            
                             # fine-tune until validation on domain stops decreasing.
                             stop_training = self.validate()
-                            logging.info('Best valid: %s' % self.best_valid)
-                            self.write_log('Best valid: %s After %s tune_parley_epochs' % (self.best_valid, self.tune_parley_epochs+1) )
                             self.tune_parley_epochs += 1
+                            
+                            logging.info('Best valid: %s' % self.best_valid)
+                            self.write_log('Best valid: %s After %s tune_parley_epochs' % (self.best_valid, self.tune_parley_epochs+1) )                            
+                            self.write_log('Finished %s tune_parleys' % self.tune_parley_epochs)
                     
                     
                     
@@ -242,8 +255,6 @@ class FtmlTrainLoop(TrainLoop):
                         logging.info(t_report) 
                         eval_data[-1][dd] = {'domain': dd, 'report': t_report, 'meta_parleys': self.meta_parleys, 'tune_epochs': self.tune_parley_epochs}   
                         
-                    # make sure the meta parameters are loaded before evaluating another training domain
-#                     world.agents[1].model.load_state_dict(M)
         
         return eval_data
 
@@ -373,7 +384,7 @@ class FtmlTrainModel(TrainModel):
             
             import datetime
             stamp = datetime.datetime.now().strftime('%Y_%m_%d_%H_%M')
-            self.opt['logging_filename'] = 'logging_%s.txt' % stamp
+            self.opt['logging_filename'] = 'logging_ftml_%s.txt' % stamp
             self.train_loop = FtmlTrainLoop(self.opt)
             eval_data = self.train_loop.train()
 
