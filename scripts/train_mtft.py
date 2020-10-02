@@ -45,6 +45,9 @@ def setup_args(parser=None) -> ParlaiParser:
 
 #     train.add_argument('--n_grad', type='bool', default=False, hidden=True)
     train.add_argument('-nomt', '--no-multi-task', type='bool', default=False)
+    train.add_argument('-nepb', '--num-episode-batch', type=int, default=3)
+    train.add_argument('-ebs', '--eval-batch-size', type=int, default=32)
+    
     
     TensorboardLogger.add_cmdline_args(parser)
 
@@ -69,7 +72,7 @@ class MtftTrainLoop(TrainLoop):
 #         print('should be DefaultTeacher: ', self.world.agents[0].__class__.__name__)
 #         print('should be FtmlLearnerAgent: ', self.world.agents[1].__class__.__name__)
         
-        
+#         opt['batchsize'] = opt['eval_batch_size'] # overwrite so that the eval worlds are in batchworld
         self.test_worlds = load_eval_worlds(self.agent, opt, 'test')
         self.valid_worlds = load_eval_worlds(self.agent, opt, 'valid')
         self.logging_filename = opt['logging_filename']
@@ -95,6 +98,7 @@ class MtftTrainLoop(TrainLoop):
         opt = self.opt
         world = self.world
         teacher = world.agents[0]
+        student = world.agents[1]
         more_data_in_domain = True
         
         eval_data = {x:[] for x in teacher.domains}
@@ -120,8 +124,8 @@ class MtftTrainLoop(TrainLoop):
                 self._total_exs = 0
                 
             while not stop_training: # This is for multi-tasking a global model
-                for _ in range(int(teacher.num_episodes())): 
-                    world.parley()
+                for _ in range(int(teacher.num_episodes() / opt['num_episode_batch'])): 
+                    world.batch_parley()
                     self.parleys += 1
                     
                     # TODO: I think this should be set correctly. Helps tracking, needed for termination?
@@ -153,6 +157,9 @@ class MtftTrainLoop(TrainLoop):
                     w.agents[0].index.value = -1 # reset index because we'll stream through the training data.
                     w.agents[0].entry_idx = 0
                     
+                
+                if not opt['validation_metric'].startswith('bleu'):  
+                    student.skip_generation = True  
                 stop_training = self.validate()
                 logging.info('Multi-task model validation value: %s ' % self.best_valid)
 
@@ -160,6 +167,8 @@ class MtftTrainLoop(TrainLoop):
                 
             # After the multi-task model is trained, fine tune model for each domain.
             M = copy.deepcopy(world.agents[1].model.state_dict())
+            optim_state = copy.deepcopy(world.agents[1].optimizer.state_dict())
+            
             for dd in teacher.domains: 
                 
                 # Restrict valid_world teachers to chosen domain for fine-tuning
@@ -185,8 +194,10 @@ class MtftTrainLoop(TrainLoop):
                     
                 self.write_log("STARTING Fine-tuning OF STUDENT HERE on %s " % dd)
                 if self.test_worlds[0].agents[0].num_episodes_in_restricted_domain() > 0:                
+                    
                     # make sure the meta parameters are loaded before evaluating another training domain
                     world.agents[1].model.load_state_dict(M)
+                    world.agents[1].optimizer.load_state_dict(optim_state) 
                     
                     # Restrict training world to fine-tuning domain
                     teacher.fix_teacher_domain([dd])
@@ -195,6 +206,8 @@ class MtftTrainLoop(TrainLoop):
                     
                     
                     logging.info('Fine-tuning to: %s'% dd)
+                    self.write_log('fine-tuning epoch size: %s' % teacher.num_episodes_in_restricted_domain())
+                    
                     self.best_valid = None
                     stop_training = False
                     self.tune_parley_epochs = 0
@@ -203,26 +216,45 @@ class MtftTrainLoop(TrainLoop):
                     while not stop_training:
                         # fine-tune for one epoch over training
                         self.write_log('Learning rate : %s ' % world.agents[1].optimizer.state_dict()['param_groups'][0]['lr'])
-                    
-    #                     while not world.epoch_done(): # HERE: loop for an epoch over domain training data. 
-                        for n in range(teacher.num_episodes_in_restricted_domain()): # epoch episodes, as each full episode processed. 
-                            world.parley() # Note the updating is fixed to the domain training data only.
                         
+    #                     while not world.epoch_done(): # HERE: loop for an epoch over domain training data. 
+                        for n in range(int(teacher.num_episodes_in_restricted_domain() / opt['num_episode_batch'])): # epoch episodes, as each full episode processed. 
+#                             print('\n\n TRAINING PARLEY')
+                            world.batch_parley() # Note the updating is fixed to the domain training data only.
+                            
+#                             import pdb; pdb.set_trace()
+                            
                         # fine-tune until validation on domain stops decreasing.
+#                         print('\n\n VALIDATION PARLEYS')
+                        if not opt['validation_metric'].startswith('bleu'):  
+                            student.skip_generation = True  
                         stop_training = self.validate()
+#                         import pdb; pdb.set_trace()
+#                         print('\t\t\t\t\tValid: %s Learning rate : %s ' % (self.best_valid, world.agents[1].optimizer.state_dict()['param_groups'][0]['lr']))
+#                         import sys; sys.exit()
+#                         print('num training exs: ', world.agents[0].num_episodes_in_restricted_domain())
+#                         print('num valid exs: ', self.valid_worlds[0].agents[0].num_episodes_in_restricted_domain())
+#                         print('valid is rand: ', self.valid_worlds[0].agents[0].random)
+#                         print('episode index: ', self.valid_worlds[0].agents[0].index.value)
+#                         print('Training: ', world.agents[0].messages[0])
+#                         print('Validation: ', self.valid_worlds[0].agents[0].messages[0])
                         self.tune_parley_epochs += 1
                         
                         logging.info('Best valid: %s' % self.best_valid)
                         self.write_log('Best fine-tune valid: %s' % self.best_valid)
-                        self.write_log('Finished %s tune_parleys' % self.tune_parley_epochs)
+                        self.write_log('Finished %s tune_parley epochs' % self.tune_parley_epochs)
                         
                         
                     # Evaluate on domain test set.
+                    student.skip_generation = False
                     max_exs = -1
                     t_report = self._run_eval(self.test_worlds, opt, 'test', max_exs, write_log=True)
                     logging.info('on domain %s: test report: ' % dd)
                     logging.info(t_report) 
-                    eval_data[dd] = {'domain':dd, 'report': t_report, 'num_parleys': self.parleys, 'tune_epochs': self.tune_parley_epochs}
+                    eval_data[dd] = {'domain':dd, 'test_report': t_report, 
+                                    'num_parleys': self.parleys, 'tune_epochs': self.tune_parley_epochs, 
+                                    'mt_epoch_size': teacher.num_episodes(), 
+                                    'domain_epoch_size': teacher.num_episodes_in_restricted_domain()}
                 
         
         import datetime

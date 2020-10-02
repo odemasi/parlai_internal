@@ -272,8 +272,7 @@ class FtmlTeacher(FixedDialogTeacher):
                     if self.index.value >= self.num_episodes():
                         new_idx = None
                     else:
-                        new_idx = self.index.value
-#         print('New_idx: ', new_idx, self.index.value)        
+                        new_idx = self.index.value   
         return new_idx
         
         

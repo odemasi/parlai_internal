@@ -60,7 +60,12 @@ class FtmlLearnerAgent(Seq2seqAgent):
 # #             label_truncate=self.label_truncate,
 # #         )
 #         
-        
+
+#     def observe(self, obs): 
+#         output = super().observe(obs)
+#         print(self.observation)
+#         return output 
+            
     def meta_act(self):
     # def act(self):
         """

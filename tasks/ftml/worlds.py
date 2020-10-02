@@ -148,6 +148,56 @@ class DefaultWorld(DialogPartnerWorld):
 #             # Make sure we push all the metrics to main thread in hogwild/workers
 #             self.global_metrics.flush()
 
+        return batch_reply   
+        
+        
+        
+        
+        
+    def batch_parley(self):
+        
+        teacher, student = self.agents
+        observations = []
+        
+        
+        for i in range(self.opt['num_episode_batch']): 
+            # batchify all the turns from all the dialogs in the meta-batch together. 
+            next_episode_idx = teacher.next_episode_idx()
+#             print('episode num in batch: ', i, 'next episode idx: ', next_episode_idx)
+            for a in teacher.get_episode(next_episode_idx):
+                observations.extend([student.observe(a)])
+                student.self_observe(observations[-1])
+              
+        batch_reply = [
+            Message({'id': self.getID(), 'episode_done': False}) for _ in observations
+        ]
+
+        # check if there are any labels available, if so we will train on them
+        self.is_training = True #any('labels' in obs for obs in observations)
+        
+        
+        # create a batch from the vectors
+        batch = student.batchify(observations)
+#         import pdb; pdb.set_trace()
+        student._init_cuda_buffer(10*self.opt['num_episode_batch'], student.label_truncate or 256)
+        student.model.train()
+        student.zero_grad()
+        
+        param_names = list(student.model.state_dict().keys())
+        
+#         import torch; torch.set_printoptions(precision=6)
+#         print('Init: ', student.model.state_dict()[param_names[3]][0,:10])
+        
+        student._control_local_metrics(disabled=True) # turn off local metric computation
+#         print(student.__local_metrics_enabled); sys.exit()
+        loss = student.compute_loss(batch)
+        
+        student.backward(loss)
+        student.update_params()
+#         print('grad: ', list(student.model.parameters())[0].grad)
+#         print('Updated: ', student.model.state_dict()[param_names[3]][0,:10])
+        student._control_local_metrics(enabled=True)
+
         return batch_reply        
         
         
