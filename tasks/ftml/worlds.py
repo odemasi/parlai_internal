@@ -16,6 +16,8 @@ import random
 from parlai.core.message import Message
 from parlai.core.worlds import validate
 import parlai.utils.logging as logging
+import torch
+
 
 
 class DefaultWorld(DialogPartnerWorld):
@@ -156,16 +158,20 @@ class DefaultWorld(DialogPartnerWorld):
         
     def batch_parley(self):
         
+        
         teacher, student = self.agents
         observations = []
         
-        
+        if student.use_cuda: 
+            torch.cuda.empty_cache()
+            
         for i in range(self.opt['num_episode_batch']): 
             # batchify all the turns from all the dialogs in the meta-batch together. 
             next_episode_idx = teacher.next_episode_idx()
 #             print('episode num in batch: ', i, 'next episode idx: ', next_episode_idx)
-            for a in teacher.get_episode(next_episode_idx):
-                observations.extend([student.observe(a)])
+            dialog = teacher.get_episode(next_episode_idx)
+            for a in range(min(self.opt['max_num_turns'], len(dialog))):
+                observations.extend([student.observe(dialog[a])])
                 student.self_observe(observations[-1])
               
         batch_reply = [
@@ -179,7 +185,7 @@ class DefaultWorld(DialogPartnerWorld):
         # create a batch from the vectors
         batch = student.batchify(observations)
 #         import pdb; pdb.set_trace()
-        student._init_cuda_buffer(10*self.opt['num_episode_batch'], student.label_truncate or 256)
+        student._init_cuda_buffer(5*self.opt['num_episode_batch'], student.label_truncate or 256)
         student.model.train()
         student.zero_grad()
         
@@ -187,7 +193,7 @@ class DefaultWorld(DialogPartnerWorld):
         
 #         import torch; torch.set_printoptions(precision=6)
 #         print('Init: ', student.model.state_dict()[param_names[3]][0,:10])
-        
+#         logging.info('Batch size: %s' % batch.batchsize)
         student._control_local_metrics(disabled=True) # turn off local metric computation
 #         print(student.__local_metrics_enabled); sys.exit()
         loss = student.compute_loss(batch)

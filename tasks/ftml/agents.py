@@ -81,6 +81,11 @@ class FtmlTeacher(FixedDialogTeacher):
                         del self.messages[line.strip()]
         self.messages = list(self.messages.values())
         
+        # Truncate abnormally long conversations
+        for episode_idx in range(len(self.messages)):
+            if len(self.messages[episode_idx]['log']):
+                self.messages[episode_idx]['log'] = self.messages[episode_idx]['log'][:14]
+                
         
         self.domains = [x for x in self.messages[0]['goal'] if self.messages[0]['goal'][x] == {} or 'info' in self.messages[0]['goal'][x]]
         domains = [d for i in range(len(self.messages)) for d in self.domains if len(self.messages[i]['goal'][d]) > 0]
@@ -316,11 +321,14 @@ class FtmlTeacher(FixedDialogTeacher):
 #         print('getting episode: %s, entry: %s' % (self.episode_idx, self.entry_idx))
 #         print('TEACHER EXAMPLE: ', ex)
         self._episode_done = ex.get('episode_done', False)
-
+        
+        out_of_all = self.episode_idx + self.opt.get("batchsize", 1) >= self.num_episodes()
+        out_of_restricted = self.is_restricted() and (self.index.value+1 >= self.num_episodes_in_restricted_domain())
+        
         if (
             not self.cycle
             and self._episode_done
-            and self.episode_idx + self.opt.get("batchsize", 1) >= self.num_episodes()
+            and (out_of_all or out_of_restricted)
         ):
             epoch_done = True
         else:

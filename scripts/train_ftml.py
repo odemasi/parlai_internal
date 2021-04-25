@@ -53,6 +53,7 @@ def setup_args(parser=None) -> ParlaiParser:
     train.add_argument('-nmmetastep', '--num-meta-steps', type=int, default=50)
     train.add_argument('-nepb', '--num-episode-batch', type=int, default=3)
     train.add_argument('-ebs', '--eval-batch-size', type=int, default=32)
+    train.add_argument('-mnts', '--max-num-turns', type=int, default=15)
     
     TensorboardLogger.add_cmdline_args(parser)
 
@@ -193,6 +194,9 @@ class FtmlTrainLoop(TrainLoop):
                 
                 M = copy.deepcopy(world.agents[1].model.state_dict())
                 optim_state = copy.deepcopy(world.agents[1].optimizer.state_dict())
+                
+                self._total_epochs = 0
+                self._total_exs = 0
                 
                 # fine-tune to each domain to test performance.
                 logging.info('Added domains: %s ' % ', '.join(teacher.added_domains()))
